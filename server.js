@@ -155,12 +155,29 @@ app.get("/api/ingest", (req, res) => {
     const news = JSON.parse(Buffer.from(b64, "base64url").toString("utf8"));
     if (!Array.isArray(news.items) || !news.items.length) throw new Error("no items");
     writeJson(NEWS_FILE, news);
+    // складируем дайджест дня в архив
+    const DIG_FILE = path.join(DATA_DIR, "digests.json");
+    let hist = readJson(DIG_FILE, []);
+    const day = String(tag).slice(0, 10);
+    hist = hist.filter(h => h.day !== day);
+    hist.unshift({ day, updated: news.updated || day, digest: news.digest || [], ideas: news.ideas || [] });
+    writeJson(DIG_FILE, hist.slice(0, 30));
     delete chunks[tag];
     return res.json({ ok: true, saved: true, items: news.items.length });
   } catch (e) {
     delete chunks[tag];
     return res.status(422).json({ error: "assemble failed: " + e.message });
   }
+});
+
+// Архив дайджестов
+app.get("/api/digests", (req, res) => {
+  const hist = readJson(path.join(DATA_DIR, "digests.json"), []);
+  if (!hist.length) {
+    const news = readJson(NEWS_FILE, null) || readJson(BUNDLED_NEWS, {});
+    if (news.digest) return res.json([{ day: "current", updated: news.updated || "", digest: news.digest, ideas: news.ideas || [] }]);
+  }
+  res.json(hist);
 });
 
 app.get("/api/health", (req, res) => {
@@ -183,5 +200,10 @@ app.listen(PORT, async () => {
       allowed_updates: ["message"]
     });
     console.log("setWebhook:", JSON.stringify(r));
+    // постоянная кнопка мини-апки внизу чата (вместо скрепки-меню)
+    const r2 = await tg("setChatMenuButton", {
+      menu_button: { type: "web_app", text: "📰 AI-News", web_app: { url: "https://" + domain + "/" } }
+    });
+    console.log("setChatMenuButton:", JSON.stringify(r2));
   }
 });
