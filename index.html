@@ -12,7 +12,11 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     background: #f4f5fa; color: #1a1c23; line-height: 1.5; min-height: 100vh;
   }
-  .wrap { max-width: 640px; margin: 0 auto; padding: 16px 14px 50px; }
+  .wrap {
+    max-width: 640px; margin: 0 auto;
+    /* отступы под системную шапку и кнопки Telegram в полноэкранном режиме */
+    padding: calc(16px + var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)) 14px calc(50px + var(--tg-safe-area-inset-bottom, 0px));
+  }
   header { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
   h1 {
     font-size: 22px; font-weight: 800; letter-spacing: -0.5px;
@@ -174,7 +178,18 @@
 
 <script>
 const tg = window.Telegram && window.Telegram.WebApp;
-if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
+if (tg) {
+  try {
+    tg.ready();
+    tg.expand();
+    // Полноэкранный режим (Bot API 8.0+): на телефоне апка раскрывается на весь экран
+    if (typeof tg.requestFullscreen === "function" && parseFloat(tg.version) >= 8) {
+      tg.requestFullscreen();
+    }
+    // если Telegram отказал (например, десктоп) — просто остаёмся в развёрнутом виде
+    tg.onEvent && tg.onEvent("fullscreenFailed", function () {});
+  } catch (e) {}
+}
 
 const SRC_META = {
   openai: { name: "OpenAI",       color: "#0f766e", bg: "#ccfbf1" },
