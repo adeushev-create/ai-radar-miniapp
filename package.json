@@ -1,0 +1,13 @@
+{
+  "name": "ai-radar-miniapp",
+  "version": "1.0.0",
+  "description": "AI-Радар — Telegram Mini App с новостями нейросетей и лайками",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "express": "^4.19.0"
+  }
+}

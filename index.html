@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AI-Радар</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #f4f5fa; color: #1a1c23; line-height: 1.5; min-height: 100vh;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 16px 14px 50px; }
+  header { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+  h1 {
+    font-size: 22px; font-weight: 800; letter-spacing: -0.5px;
+    background: linear-gradient(90deg, #4f46e5, #9333ea);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .sub { color: #6b7080; font-size: 12px; margin-top: 2px; }
+  .digest {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 60%, #9333ea 100%);
+    color: #fff; border-radius: 16px; padding: 15px 17px; margin-bottom: 10px;
+    box-shadow: 0 6px 18px rgba(79,70,229,.25);
+  }
+  .digest h2 { font-size: 14px; font-weight: 700; margin-bottom: 8px; opacity: .95; }
+  .digest ul { list-style: none; }
+  .digest li { font-size: 13.5px; padding: 4px 0 4px 20px; position: relative; opacity: .97; }
+  .digest li::before { content: "⚡"; position: absolute; left: 0; top: 4px; font-size: 11px; }
+  details.ideas {
+    background: #fff7ed; border-left: 4px solid #f59e0b; border-radius: 12px;
+    padding: 10px 14px; margin-bottom: 14px;
+  }
+  details.ideas summary { font-size: 13px; font-weight: 700; color: #b45309; cursor: pointer; }
+  details.ideas ul { list-style: none; margin-top: 6px; }
+  details.ideas li { font-size: 13px; color: #57534e; padding: 3px 0 3px 18px; position: relative; }
+  details.ideas li::before { content: "💡"; position: absolute; left: 0; top: 3px; font-size: 10px; }
+  .chips {
+    display: flex; gap: 7px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 10px;
+    scrollbar-width: none;
+  }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: 0 0 auto; border: 1.5px solid #e2e4ee; background: #fff; color: #444a5a;
+    border-radius: 999px; padding: 6px 13px; font-size: 12.5px; font-weight: 600;
+    cursor: pointer; user-select: none; white-space: nowrap;
+  }
+  .chip.on { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+  .search {
+    width: 100%; border: 1.5px solid #e2e4ee; border-radius: 999px; padding: 8px 16px;
+    font-size: 14px; outline: none; background: #fff; margin-bottom: 12px;
+  }
+  .search:focus { border-color: #4f46e5; }
+  .grid { display: flex; flex-direction: column; gap: 11px; }
+  .card {
+    background: #fff; border-radius: 15px; padding: 15px 16px; border: 1px solid #ebedf5;
+    cursor: pointer; display: flex; flex-direction: column; gap: 8px; position: relative;
+  }
+  .card:active { transform: scale(.99); }
+  .card.read { opacity: .6; }
+  .meta { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .badge { font-size: 10.5px; font-weight: 700; padding: 3px 8px; border-radius: 6px; }
+  .cat { font-size: 10.5px; font-weight: 600; padding: 3px 8px; border-radius: 999px; }
+  .cat.models { background: #e0e9ff; color: #3730c9; }
+  .cat.agents { background: #f3e8ff; color: #7e22ce; }
+  .cat.money  { background: #fef3c7; color: #a16207; }
+  .cat.biz    { background: #dcfce7; color: #15803d; }
+  .cat.ru     { background: #fee2e2; color: #b91c1c; }
+  .cat.world  { background: #cffafe; color: #0e7490; }
+  .cat.reg    { background: #f1f2f7; color: #5b6070; }
+  .time { font-size: 11px; color: #9aa0b0; margin-left: auto; }
+  .card h3 { font-size: 15px; font-weight: 700; line-height: 1.35; letter-spacing: -0.2px; }
+  .card p { font-size: 13px; color: #52586a; }
+  .card p .term { color: #9aa0b0; }
+  .actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+  .vote {
+    border: 1.5px solid #e2e4ee; background: #fff; border-radius: 999px;
+    padding: 5px 13px; font-size: 13px; font-weight: 600; color: #52586a; cursor: pointer;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .vote.up.on { background: #dcfce7; border-color: #22c55e; color: #15803d; }
+  .vote.down.on { background: #fee2e2; border-color: #ef4444; color: #b91c1c; }
+  .hot { font-size: 11px; font-weight: 700; color: #ea580c; margin-left: auto; }
+  .more { font-size: 12px; color: #4f46e5; font-weight: 600; margin-left: auto; }
+  .empty, .loading { text-align: center; padding: 50px 20px; color: #6b7080; font-size: 14px; }
+  .spinner {
+    width: 30px; height: 30px; margin: 0 auto 12px;
+    border: 3px solid #e2e4ee; border-top-color: #4f46e5; border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .footer { margin-top: 22px; font-size: 11px; color: #9aa0b0; line-height: 1.6; }
+  .overlay {
+    position: fixed; inset: 0; background: rgba(15,17,30,.55);
+    display: none; align-items: flex-end; justify-content: center; z-index: 100;
+  }
+  .overlay.show { display: flex; }
+  .modal {
+    background: #fff; border-radius: 20px 20px 0 0; max-width: 640px; width: 100%;
+    max-height: 88vh; overflow-y: auto; padding: 22px 20px 30px; position: relative;
+  }
+  .modal .close {
+    position: sticky; top: 0; float: right; width: 32px; height: 32px;
+    border: none; background: #f1f2f7; border-radius: 50%; font-size: 14px; cursor: pointer; color: #5b6070;
+  }
+  .modal h2 { font-size: 18px; font-weight: 800; line-height: 1.3; margin: 8px 0 14px; }
+  .modal .body { font-size: 14.5px; color: #2a2e3d; }
+  .modal .body p { margin-bottom: 12px; }
+  .modal .body strong { color: #14161f; }
+  .modal .orig { display: inline-block; margin-top: 6px; font-size: 13.5px; font-weight: 600; color: #4f46e5; text-decoration: none; }
+  .modal .mactions { display: flex; gap: 8px; margin-top: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>🛰️ AI-Радар</h1>
+      <div class="sub" id="subtitle">Новости нейросетей — по-русски и простым языком</div>
+    </div>
+  </header>
+
+  <div class="digest" id="digest" style="display:none">
+    <h2>⚡ Главное прямо сейчас</h2>
+    <ul id="digestList"></ul>
+  </div>
+
+  <details class="ideas" id="ideas" style="display:none">
+    <summary>💡 Что применить</summary>
+    <ul id="ideasList"></ul>
+  </details>
+
+  <div class="chips" id="chips">
+    <span class="chip on" data-cat="all">Все</span>
+    <span class="chip" data-cat="top">🔥 Топ</span>
+    <span class="chip" data-cat="models">🚀 Модели</span>
+    <span class="chip" data-cat="agents">🤖 Агенты и dev</span>
+    <span class="chip" data-cat="money">💰 Деньги</span>
+    <span class="chip" data-cat="biz">💼 Бизнес</span>
+    <span class="chip" data-cat="ru">🇷🇺 Россия</span>
+    <span class="chip" data-cat="world">🌏 Китай и мир</span>
+    <span class="chip" data-cat="reg">🛡️ Регулирование</span>
+    <span class="chip" data-cat="unread">Только новые</span>
+  </div>
+  <input class="search" id="search" placeholder="Поиск по новостям…">
+
+  <div class="loading" id="loading"><div class="spinner"></div>Загружаю новости…</div>
+  <div class="grid" id="grid"></div>
+  <div class="footer" id="footer" style="display:none">
+    Собрано автоматически из открытых источников. Пояснения терминов — серым в скобках.
+    Цифры и заявления брендов — ориентир, проверяй перед использованием.
+    Лента обновляется каждое утро. 👍 и 👎 поднимают лучшие новости в «🔥 Топ» у всех.
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <button class="close" id="closeBtn">✕</button>
+    <div class="meta" id="modalMeta"></div>
+    <h2 id="modalTitle"></h2>
+    <div class="body" id="modalBody"></div>
+    <a class="orig" id="modalOrig" target="_blank" rel="noopener">Открыть оригинал ↗</a>
+    <div class="mactions" id="modalActions"></div>
+  </div>
+</div>
+
+<script>
+const tg = window.Telegram && window.Telegram.WebApp;
+if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
+
+const SRC_META = {
+  openai: { name: "OpenAI",       color: "#0f766e", bg: "#ccfbf1" },
+  tc:     { name: "TechCrunch",   color: "#15803d", bg: "#dcfce7" },
+  vb:     { name: "VentureBeat",  color: "#dc2626", bg: "#fee2e2" },
+  media:  { name: "СМИ",          color: "#6d28d9", bg: "#ede9fe" },
+  ru:     { name: "Рос. СМИ",     color: "#b91c1c", bg: "#fee2e2" },
+  web:    { name: "Веб-дайджест", color: "#2563eb", bg: "#dbeafe" }
+};
+const CAT_LABEL = {
+  models: "🚀 Модели", agents: "🤖 Агенты и dev", money: "💰 Деньги",
+  biz: "💼 Бизнес", ru: "🇷🇺 Россия", world: "🌏 Китай и мир", reg: "🛡️ Регулирование"
+};
+
+const $ = id => document.getElementById(id);
+function lsGet(k, def) { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } }
+function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+function fmtInline(s) { return esc(s).replace(/\(([^)]{12,})\)/g, '<span class="term">($1)</span>'); }
+function fmtDate(iso) {
+  const dt = new Date(iso + "T12:00:00");
+  const days = Math.floor((Date.now() - dt.getTime()) / 864e5);
+  if (days <= 0) return "сегодня";
+  if (days === 1) return "вчера";
+  if (days < 7) return days + " дн назад";
+  return dt.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+}
+function mdToHtml(md) {
+  return md.split(/\n\s*\n/).map(b => {
+    b = b.trim();
+    if (!b) return "";
+    return "<p>" + esc(b).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>") + "</p>";
+  }).join("");
+}
+
+// id пользователя: из Telegram или случайный локальный
+let UID = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id)
+  ? "tg" + tg.initDataUnsafe.user.id
+  : lsGet("ainews_uid", null);
+if (!UID) { UID = "an" + Math.random().toString(36).slice(2, 12); lsSet("ainews_uid", UID); }
+
+let ITEMS = [], AGG = {}, MY = lsGet("ainews_my_votes", {}), READ = lsGet("ainews_read", {});
+let FILTER = "all", QUERY = "";
+
+function score(id) { const a = AGG[id] || { up: 0, down: 0 }; return a.up - a.down; }
+
+function render() {
+  let list = ITEMS.slice();
+  if (FILTER === "top") {
+    list.sort((a, b) => score(b.id) - score(a.id) || b.d.localeCompare(a.d));
+  }
+  const visible = list.filter(i => {
+    if (FILTER === "unread" && READ[i.id]) return false;
+    if (!["all", "top", "unread"].includes(FILTER) && i.c !== FILTER) return false;
+    if (QUERY && !(i.t + " " + i.s).toLowerCase().includes(QUERY)) return false;
+    return true;
+  });
+  $("grid").innerHTML = visible.map(i => {
+    const src = SRC_META[i.src] || SRC_META.web;
+    const a = AGG[i.id] || { up: 0, down: 0 };
+    const my = MY[i.id] || 0;
+    const sc = a.up - a.down;
+    return '<div class="card' + (READ[i.id] ? " read" : "") + '" data-id="' + i.id + '">'
+      + '<div class="meta">'
+      + '<span class="badge" style="color:' + src.color + ';background:' + src.bg + '">' + src.name + '</span>'
+      + '<span class="cat ' + i.c + '">' + (CAT_LABEL[i.c] || i.c) + '</span>'
+      + '<span class="time">' + fmtDate(i.d) + '</span>'
+      + '</div>'
+      + '<h3>' + esc(i.t) + '</h3>'
+      + '<p>' + fmtInline(i.s) + '</p>'
+      + '<div class="actions">'
+      + '<button class="vote up' + (my === 1 ? " on" : "") + '" data-v="1" data-id="' + i.id + '">👍 ' + a.up + '</button>'
+      + '<button class="vote down' + (my === -1 ? " on" : "") + '" data-v="-1" data-id="' + i.id + '">👎 ' + a.down + '</button>'
+      + (sc >= 3 ? '<span class="hot">🔥 популярное</span>' : '<span class="more">Читать →</span>')
+      + '</div>'
+      + '</div>';
+  }).join("") || '<div class="empty">Ничего не нашлось. Попробуй другой фильтр.</div>';
+}
+
+async function sendVote(id, v) {
+  const cur = MY[id] || 0;
+  const next = cur === v ? 0 : v;
+  MY[id] = next; if (!next) delete MY[id];
+  lsSet("ainews_my_votes", MY);
+  // оптимистично обновим локально
+  if (!AGG[id]) AGG[id] = { up: 0, down: 0 };
+  if (cur === 1) AGG[id].up--; if (cur === -1) AGG[id].down--;
+  if (next === 1) AGG[id].up++; if (next === -1) AGG[id].down++;
+  render();
+  try {
+    const r = await fetch("/api/vote", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uid: UID, id, v: next })
+    });
+    const j = await r.json();
+    if (j && j.agg) { AGG[id] = j.agg; render(); }
+    if (tg && tg.HapticFeedback) try { tg.HapticFeedback.impactOccurred("light"); } catch (e) {}
+  } catch (e) {}
+}
+
+function openModal(id) {
+  const i = ITEMS.find(x => x.id === id);
+  if (!i) return;
+  READ[id] = true; lsSet("ainews_read", READ);
+  const src = SRC_META[i.src] || SRC_META.web;
+  $("modalMeta").innerHTML =
+    '<span class="badge" style="color:' + src.color + ';background:' + src.bg + '">' + src.name + '</span>'
+    + '<span class="cat ' + i.c + '">' + (CAT_LABEL[i.c] || i.c) + '</span>'
+    + '<span class="time">' + fmtDate(i.d) + '</span>';
+  $("modalTitle").textContent = i.t;
+  $("modalBody").innerHTML = mdToHtml(i.full || i.s);
+  $("modalOrig").href = i.link;
+  const my = MY[id] || 0;
+  const a = AGG[id] || { up: 0, down: 0 };
+  $("modalActions").innerHTML =
+    '<button class="vote up' + (my === 1 ? " on" : "") + '" data-v="1" data-id="' + id + '">👍 ' + a.up + '</button>'
+    + '<button class="vote down' + (my === -1 ? " on" : "") + '" data-v="-1" data-id="' + id + '">👎 ' + a.down + '</button>';
+  $("overlay").classList.add("show");
+  render();
+}
+
+document.addEventListener("click", e => {
+  const voteBtn = e.target.closest(".vote");
+  if (voteBtn) {
+    e.stopPropagation();
+    sendVote(voteBtn.dataset.id, parseInt(voteBtn.dataset.v, 10));
+    if ($("overlay").classList.contains("show")) $("overlay").classList.remove("show");
+    return;
+  }
+  const chip = e.target.closest(".chip");
+  if (chip) {
+    document.querySelectorAll(".chip").forEach(c => c.classList.remove("on"));
+    chip.classList.add("on");
+    FILTER = chip.dataset.cat;
+    render();
+    return;
+  }
+  const card = e.target.closest(".card");
+  if (card) openModal(card.dataset.id);
+});
+$("search").addEventListener("input", e => { QUERY = e.target.value.toLowerCase().trim(); render(); });
+$("closeBtn").addEventListener("click", () => $("overlay").classList.remove("show"));
+$("overlay").addEventListener("click", e => { if (e.target === $("overlay")) $("overlay").classList.remove("show"); });
+
+async function init() {
+  try {
+    const [newsR, votesR] = await Promise.all([fetch("/api/news"), fetch("/api/votes")]);
+    const news = await newsR.json();
+    AGG = await votesR.json();
+    ITEMS = (news.items || []).slice().sort((a, b) => b.d.localeCompare(a.d));
+    $("subtitle").textContent = "Обновлено: " + (news.updated || "—");
+    if (news.digest && news.digest.length) {
+      $("digestList").innerHTML = news.digest.map(l => "<li>" + esc(l) + "</li>").join("");
+      $("digest").style.display = "block";
+    }
+    if (news.ideas && news.ideas.length) {
+      $("ideasList").innerHTML = news.ideas.map(l => "<li>" + esc(l) + "</li>").join("");
+      $("ideas").style.display = "block";
+    }
+    $("loading").style.display = "none";
+    $("footer").style.display = "block";
+    render();
+  } catch (e) {
+    $("loading").innerHTML = "Не получилось загрузить новости. Потяни вниз, чтобы обновить.";
+  }
+}
+init();
+</script>
+</body>
+</html>
