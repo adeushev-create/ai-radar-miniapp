@@ -1,12 +1,12 @@
 /* AI-News — сервер для Telegram Mini App (Railway)
  * Отдаёт мини-апку, хранит лайки, принимает обновления новостей,
- * запоминает подписчиков бота и умеет рассылать им утренние сообщения. */
+ * запоминает подписчиков бота и рассылает им утренние сообщения. */
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "5mb" }));
 
 // Постоянное хранилище: Railway Volume (если подключён) или локальная папка
 const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, "data");
@@ -14,6 +14,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 const NEWS_FILE = path.join(DATA_DIR, "news.json");
 const VOTES_FILE = path.join(DATA_DIR, "votes.json");
 const SUBS_FILE = path.join(DATA_DIR, "subs.json");
+const DIG_FILE = path.join(DATA_DIR, "digests.json");
 const BUNDLED_NEWS = path.join(__dirname, "news.json");
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
@@ -25,6 +26,13 @@ function readJson(file, fallback) {
 }
 function writeJson(file, obj) {
   fs.writeFileSync(file, JSON.stringify(obj));
+}
+function currentNews() {
+  return readJson(NEWS_FILE, null) || readJson(BUNDLED_NEWS, { items: [] });
+}
+function authQuery(req, res) {
+  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) { res.status(403).json({ error: "forbidden" }); return false; }
+  return true;
 }
 
 /* ---------- Telegram API ---------- */
@@ -43,10 +51,7 @@ async function tg(method, params) {
 }
 
 /* ---------- Новости ---------- */
-app.get("/api/news", (req, res) => {
-  const news = readJson(NEWS_FILE, null) || readJson(BUNDLED_NEWS, { items: [] });
-  res.json(news);
-});
+app.get("/api/news", (req, res) => res.json(currentNews()));
 
 /* ---------- Лайки: votes.json = { uid: { itemId: 1|-1 } } ---------- */
 let votes = readJson(VOTES_FILE, {});
@@ -108,37 +113,91 @@ app.post("/tg-webhook", async (req, res) => {
   });
 });
 
-// Рассылка (для утренней задачи): GET /api/broadcast?token=...&data=<base64url текста>
-app.get("/api/broadcast", async (req, res) => {
-  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) return res.status(403).json({ error: "forbidden" });
-  let text;
-  try { text = Buffer.from(String(req.query.data || ""), "base64url").toString("utf8"); } catch {}
-  if (!text) return res.status(400).json({ error: "no text" });
+/* ---------- Рассылка ---------- */
+async function sendToAll(text) {
   const ids = Object.keys(subs);
   let sent = 0, failed = 0;
   for (const chatId of ids) {
     const r = await tg("sendMessage", { chat_id: chatId, parse_mode: "HTML", text, disable_web_page_preview: true });
-    if (r.ok) sent++; else { failed++; if (r.error_code === 403) { delete subs[chatId]; } }
-    await new Promise(r2 => setTimeout(r2, 50)); // не спешим, лимиты Telegram
+    if (r.ok) sent++; else { failed++; if (r.error_code === 403) delete subs[chatId]; }
+    await new Promise(r2 => setTimeout(r2, 50)); // лимиты Telegram
   }
   writeJson(SUBS_FILE, subs);
-  res.json({ ok: true, sent, failed, subscribers: Object.keys(subs).length });
+  return { sent, failed, subscribers: Object.keys(subs).length };
+}
+
+// Произвольный текст: POST { text } с заголовком X-Token
+app.post("/api/broadcast", async (req, res) => {
+  if (!ADMIN_TOKEN || req.get("X-Token") !== ADMIN_TOKEN) return res.status(403).json({ error: "forbidden" });
+  const text = (req.body && req.body.text || "").trim();
+  if (!text) return res.status(400).json({ error: "no text" });
+  res.json(Object.assign({ ok: true }, await sendToAll(text)));
+});
+
+// Утреннее сообщение: сервер сам собирает его из свежих новостей + шутка дня.
+// Запускается одной короткой ссылкой: GET /api/morning?token=...
+const JOKES = [
+  "Подъём, кожаные 🤖 Пока вы спали, нейросети опять что-то натворили.",
+  "Доброе утро! Ваш персональный инференс свежих новостей готов.",
+  "AGI ещё не случился. Новости — уже да.",
+  "Кофе в руку, контекст в голову. Погнали.",
+  "Пока ты спал, вышло три новые модели. Шутка. Или нет.",
+  "GPT считает токены, мы считаем новости. Всё сходится.",
+  "Утро. Градиентный спуск к кофемашине начат ☕",
+  "Новости свежие, галлюцинации нулевые. Проверено.",
+  "Роботы не спят. Мы тоже не спали — собирали дайджест.",
+  "Сингулярность откладывается, завтрак — нет. Читаем.",
+  "Твой мозг — всё ещё лучшая нейросеть. Покорми его новостями.",
+  "Промпт дня: проснись и прочитай.",
+  "Бенчмарки подведены, кофе налит. Поехали.",
+  "Все опять переобучились. В смысле модели, не люди.",
+  "Меньше думскроллинга, больше полезного скроллинга 🛰️"
+];
+
+app.get("/api/morning", async (req, res) => {
+  if (!authQuery(req, res)) return;
+  const news = currentNews();
+  const joke = JOKES[Math.floor(Date.now() / 864e5) % JOKES.length];
+  let text = "🛰️ <b>AI-News — утренний дайджест</b>\n" + joke + "\n";
+  (news.digest || []).slice(0, 4).forEach(l => { text += "\n⚡ " + l; });
+  text += "\n\nВся лента с карточками и лайками 👉 " + APP_LINK;
+  res.json(Object.assign({ ok: true }, await sendToAll(text)));
 });
 
 app.get("/api/subs", (req, res) => {
-  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) return res.status(403).json({ error: "forbidden" });
+  if (!authQuery(req, res)) return;
   res.json({ subscribers: Object.keys(subs).length });
 });
 
-/* ---------- Приём свежих новостей кусками ----------
- * GET /api/ingest?token=...&tag=2026-07-10&seq=1&total=12&data=<base64url> */
+/* ---------- Приём свежих новостей ---------- */
+function saveNews(news, dayTag) {
+  writeJson(NEWS_FILE, news);
+  // складируем дайджест дня в архив
+  let hist = readJson(DIG_FILE, []);
+  const day = String(dayTag || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  hist = hist.filter(h => h.day !== day);
+  hist.unshift({ day, updated: news.updated || day, digest: news.digest || [], ideas: news.ideas || [] });
+  writeJson(DIG_FILE, hist.slice(0, 30));
+}
+
+// Основной путь: POST целиком, JSON в теле, токен в заголовке X-Token
+app.post("/api/ingest", (req, res) => {
+  if (!ADMIN_TOKEN || req.get("X-Token") !== ADMIN_TOKEN) return res.status(403).json({ error: "forbidden" });
+  const news = req.body;
+  if (!news || !Array.isArray(news.items) || !news.items.length) return res.status(400).json({ error: "no items" });
+  saveNews(news, req.query.tag);
+  res.json({ ok: true, saved: true, items: news.items.length });
+});
+
+// Запасной путь: GET кусками (для очень коротких кусков)
+// GET /api/ingest?token=...&tag=2026-07-10&seq=1&total=12&data=<base64url>
 const chunks = {}; // tag -> { total, parts, ts }
 
 app.get("/api/ingest", (req, res) => {
-  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) return res.status(403).json({ error: "forbidden" });
+  if (!authQuery(req, res)) return;
   const { tag, seq, total, data } = req.query;
   const s = parseInt(seq, 10), t = parseInt(total, 10);
-  if (!tag || !data || !s || !t || s < 1 || s > t || t > 500) return res.status(400).json({ error: "bad chunk" });
+  if (!tag || !data || !s || !t || s < 1 || s > t || t > 2000) return res.status(400).json({ error: "bad chunk" });
 
   const now = Date.now();
   for (const k of Object.keys(chunks)) if (now - chunks[k].ts > 36e5) delete chunks[k];
@@ -154,14 +213,7 @@ app.get("/api/ingest", (req, res) => {
     for (let i = 1; i <= t; i++) b64 += chunks[tag].parts[i];
     const news = JSON.parse(Buffer.from(b64, "base64url").toString("utf8"));
     if (!Array.isArray(news.items) || !news.items.length) throw new Error("no items");
-    writeJson(NEWS_FILE, news);
-    // складируем дайджест дня в архив
-    const DIG_FILE = path.join(DATA_DIR, "digests.json");
-    let hist = readJson(DIG_FILE, []);
-    const day = String(tag).slice(0, 10);
-    hist = hist.filter(h => h.day !== day);
-    hist.unshift({ day, updated: news.updated || day, digest: news.digest || [], ideas: news.ideas || [] });
-    writeJson(DIG_FILE, hist.slice(0, 30));
+    saveNews(news, tag);
     delete chunks[tag];
     return res.json({ ok: true, saved: true, items: news.items.length });
   } catch (e) {
@@ -172,17 +224,17 @@ app.get("/api/ingest", (req, res) => {
 
 // Архив дайджестов
 app.get("/api/digests", (req, res) => {
-  const hist = readJson(path.join(DATA_DIR, "digests.json"), []);
+  const hist = readJson(DIG_FILE, []);
   if (!hist.length) {
-    const news = readJson(NEWS_FILE, null) || readJson(BUNDLED_NEWS, {});
+    const news = currentNews();
     if (news.digest) return res.json([{ day: "current", updated: news.updated || "", digest: news.digest, ideas: news.ideas || [] }]);
   }
   res.json(hist);
 });
 
 app.get("/api/health", (req, res) => {
-  const news = readJson(NEWS_FILE, null) || readJson(BUNDLED_NEWS, { items: [] });
-  res.json({ ok: true, items: news.items.length, updated: news.updated || null, bot: !!BOT_TOKEN, subscribers: Object.keys(subs).length });
+  const news = currentNews();
+  res.json({ ok: true, items: (news.items || []).length, updated: news.updated || null, bot: !!BOT_TOKEN, subscribers: Object.keys(subs).length });
 });
 
 /* ---------- Статика ---------- */
@@ -191,16 +243,16 @@ app.get("/", (req, res) => res.sendFile(path.join(__dirname, "index.html")));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log("AI-News mini app on :" + PORT);
-  // Автонастройка вебхука, чтобы бот видел /start
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
   if (BOT_TOKEN && domain) {
+    // вебхук, чтобы бот видел /start
     const r = await tg("setWebhook", {
       url: "https://" + domain + "/tg-webhook",
       secret_token: ADMIN_TOKEN || undefined,
       allowed_updates: ["message"]
     });
     console.log("setWebhook:", JSON.stringify(r));
-    // постоянная кнопка мини-апки внизу чата (вместо скрепки-меню)
+    // постоянная кнопка мини-апки внизу чата
     const r2 = await tg("setChatMenuButton", {
       menu_button: { type: "web_app", text: "📰 AI-News", web_app: { url: "https://" + domain + "/" } }
     });
