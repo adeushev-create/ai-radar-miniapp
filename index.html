@@ -25,7 +25,12 @@
     color: #fff; border-radius: 16px; padding: 15px 17px; margin-bottom: 10px;
     box-shadow: 0 6px 18px rgba(79,70,229,.25);
   }
-  .digest h2 { font-size: 14px; font-weight: 700; margin-bottom: 8px; opacity: .95; }
+  .digest h2 { font-size: 14px; font-weight: 700; margin-bottom: 8px; opacity: .95; display: flex; align-items: center; gap: 8px; }
+  .digest select {
+    margin-left: auto; border: 1px solid rgba(255,255,255,.45); background: rgba(255,255,255,.15);
+    color: #fff; border-radius: 8px; padding: 3px 6px; font-size: 12px; outline: none; max-width: 150px;
+  }
+  .digest select option { color: #1a1c23; }
   .digest ul { list-style: none; }
   .digest li { font-size: 13.5px; padding: 4px 0 4px 20px; position: relative; opacity: .97; }
   .digest li::before { content: "⚡"; position: absolute; left: 0; top: 4px; font-size: 11px; }
@@ -123,7 +128,7 @@
   </header>
 
   <div class="digest" id="digest" style="display:none">
-    <h2>⚡ Главное прямо сейчас</h2>
+    <h2>⚡ Главное <select id="digestDate" style="display:none"></select></h2>
     <ul id="digestList"></ul>
   </div>
 
@@ -143,6 +148,7 @@
     <span class="chip" data-cat="world">🌏 Китай и мир</span>
     <span class="chip" data-cat="reg">🛡️ Регулирование</span>
     <span class="chip" data-cat="unread">Только новые</span>
+    <span class="chip" data-cat="archive">🗄 Архив</span>
   </div>
   <input class="search" id="search" placeholder="Поиск по новостям…">
 
@@ -215,14 +221,20 @@ let FILTER = "all", QUERY = "";
 
 function score(id) { const a = AGG[id] || { up: 0, down: 0 }; return a.up - a.down; }
 
+// свежие = за последние 3 дня; всё старше уезжает в 🗄 Архив
+const FRESH_MS = 3 * 864e5;
+function isFresh(i) { return Date.now() - new Date(i.d + "T12:00:00").getTime() <= FRESH_MS; }
+
 function render() {
   let list = ITEMS.slice();
   if (FILTER === "top") {
     list.sort((a, b) => score(b.id) - score(a.id) || b.d.localeCompare(a.d));
   }
   const visible = list.filter(i => {
+    if (FILTER === "archive") { if (isFresh(i)) return false; }
+    else if (!isFresh(i)) return false;
     if (FILTER === "unread" && READ[i.id]) return false;
-    if (!["all", "top", "unread"].includes(FILTER) && i.c !== FILTER) return false;
+    if (!["all", "top", "unread", "archive"].includes(FILTER) && i.c !== FILTER) return false;
     if (QUERY && !(i.t + " " + i.s).toLowerCase().includes(QUERY)) return false;
     return true;
   });
@@ -313,21 +325,53 @@ $("search").addEventListener("input", e => { QUERY = e.target.value.toLowerCase(
 $("closeBtn").addEventListener("click", () => $("overlay").classList.remove("show"));
 $("overlay").addEventListener("click", e => { if (e.target === $("overlay")) $("overlay").classList.remove("show"); });
 
+/* ---------- Архив дайджестов по датам ---------- */
+let DIGESTS = [];
+function fmtDay(day) {
+  const dt = new Date(day + "T12:00:00");
+  return isNaN(dt) ? day : dt.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+}
+function showDigest(idx) {
+  const d = DIGESTS[idx];
+  if (!d) return;
+  $("digestList").innerHTML = (d.digest || []).map(l => "<li>" + esc(l) + "</li>").join("");
+  $("digest").style.display = (d.digest && d.digest.length) ? "block" : "none";
+  if (d.ideas && d.ideas.length) {
+    $("ideasList").innerHTML = d.ideas.map(l => "<li>" + esc(l) + "</li>").join("");
+    $("ideas").style.display = "block";
+  } else {
+    $("ideas").style.display = "none";
+  }
+}
+$("digestDate").addEventListener("change", e => showDigest(parseInt(e.target.value, 10)));
+
 async function init() {
   try {
-    const [newsR, votesR] = await Promise.all([fetch("/api/news"), fetch("/api/votes")]);
+    const [newsR, votesR, digR] = await Promise.all([
+      fetch("/api/news"),
+      fetch("/api/votes"),
+      fetch("/api/digests").catch(() => null)
+    ]);
     const news = await newsR.json();
     AGG = await votesR.json();
     ITEMS = (news.items || []).slice().sort((a, b) => b.d.localeCompare(a.d));
     $("subtitle").textContent = "Обновлено: " + (news.updated || "—");
-    if (news.digest && news.digest.length) {
-      $("digestList").innerHTML = news.digest.map(l => "<li>" + esc(l) + "</li>").join("");
-      $("digest").style.display = "block";
+
+    // история дайджестов с сервера; если её нет — текущий дайджест из news
+    try { if (digR && digR.ok) DIGESTS = await digR.json(); } catch (e) {}
+    if (!Array.isArray(DIGESTS)) DIGESTS = [];
+    if (!DIGESTS.length && news.digest && news.digest.length) {
+      DIGESTS = [{ day: "current", digest: news.digest, ideas: news.ideas || [] }];
     }
-    if (news.ideas && news.ideas.length) {
-      $("ideasList").innerHTML = news.ideas.map(l => "<li>" + esc(l) + "</li>").join("");
-      $("ideas").style.display = "block";
+    if (DIGESTS.length) {
+      showDigest(0);
+      if (DIGESTS.length > 1) {
+        $("digestDate").innerHTML = DIGESTS.map((d, i) =>
+          '<option value="' + i + '">' + (i === 0 ? "сегодня" : fmtDay(d.day)) + "</option>").join("");
+        $("digestDate").style.display = "inline-block";
+      }
     }
+
     $("loading").style.display = "none";
     $("footer").style.display = "block";
     render();
