@@ -4,13 +4,10 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
-
 const app = express();
 app.use(express.json({ limit: "5mb" }));
-
 // Постоянное хранилище: Railway Volume (если подключён) или локальная папка
 const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, "data");
-
 // Railway иногда ещё не успевает домонтировать Volume в ту же миллисекунду,
 // когда стартует процесс — mkdirSync тогда падает и роняет весь сервер целиком
 // (именно это видно в логах: "Mounting volume..." сразу за которым идёт npm error).
@@ -33,17 +30,14 @@ function ensureDataDirSync(dir, attempts = 20, delayMs = 250) {
   }
 }
 ensureDataDirSync(DATA_DIR);
-
 const NEWS_FILE = path.join(DATA_DIR, "news.json");
 const VOTES_FILE = path.join(DATA_DIR, "votes.json");
 const SUBS_FILE = path.join(DATA_DIR, "subs.json");
 const DIG_FILE = path.join(DATA_DIR, "digests.json");
 const BUNDLED_NEWS = path.join(__dirname, "news.json");
-
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 const BOT_TOKEN = process.env.BOT_TOKEN; // токен бота из BotFather (для рассылки)
 const APP_LINK = process.env.APP_LINK || "https://t.me/news_AI_deysh_bot/ai_news";
-
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return fallback; }
 }
@@ -57,7 +51,15 @@ function authQuery(req, res) {
   if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) { res.status(403).json({ error: "forbidden" }); return false; }
   return true;
 }
-
+// Кнопка по умолчанию под рассылками — ведёт в мини-апп со всей лентой.
+// Можно переопределить в теле запроса полем `button: { text, url }`.
+function defaultButton() {
+  return { text: "Ещё новости и детали →", url: APP_LINK };
+}
+function buildReplyMarkup(button) {
+  const b = (button && button.url) ? button : defaultButton();
+  return { inline_keyboard: [[{ text: b.text || "Открыть →", url: b.url }]] };
+}
 /* ---------- Telegram API ---------- */
 async function tg(method, params) {
   if (!BOT_TOKEN) return { ok: false, description: "no BOT_TOKEN" };
@@ -72,10 +74,8 @@ async function tg(method, params) {
     return { ok: false, description: String(e) };
   }
 }
-
 /* ---------- Новости ---------- */
 app.get("/api/news", (req, res) => res.json(currentNews()));
-
 /* ---------- Лайки: votes.json = { uid: { itemId: 1|-1 } } ---------- */
 let votes = readJson(VOTES_FILE, {});
 let flushTimer = null;
@@ -93,9 +93,7 @@ function aggregates() {
   }
   return agg;
 }
-
 app.get("/api/votes", (req, res) => res.json(aggregates()));
-
 app.post("/api/vote", (req, res) => {
   const { uid, id, v } = req.body || {};
   if (!uid || !id || ![1, -1, 0].includes(v)) return res.status(400).json({ error: "bad request" });
@@ -105,10 +103,8 @@ app.post("/api/vote", (req, res) => {
   scheduleFlush();
   res.json({ ok: true, agg: aggregates()[id] || { up: 0, down: 0 } });
 });
-
 /* ---------- Подписчики бота ---------- */
 let subs = readJson(SUBS_FILE, {}); // chat_id -> { name, ts }
-
 // Вебхук Telegram: /start подписывает, /stop отписывает
 app.post("/tg-webhook", async (req, res) => {
   res.json({ ok: true }); // отвечаем сразу, Telegram не любит ждать
@@ -117,7 +113,6 @@ app.post("/tg-webhook", async (req, res) => {
   if (!msg || !msg.chat) return;
   const chatId = String(msg.chat.id);
   const text = (msg.text || "").trim().toLowerCase();
-
   if (text.startsWith("/stop")) {
     delete subs[chatId];
     writeJson(SUBS_FILE, subs);
@@ -135,28 +130,32 @@ app.post("/tg-webhook", async (req, res) => {
       : "Ты уже в деле 😎 Лента тут: " + APP_LINK
   });
 });
-
 /* ---------- Рассылка ---------- */
-async function sendToAll(text) {
+async function sendToAll(text, replyMarkup) {
   const ids = Object.keys(subs);
   let sent = 0, failed = 0;
   for (const chatId of ids) {
-    const r = await tg("sendMessage", { chat_id: chatId, parse_mode: "HTML", text, disable_web_page_preview: true });
+    const params = { chat_id: chatId, parse_mode: "HTML", text, disable_web_page_preview: true };
+    if (replyMarkup) params.reply_markup = replyMarkup;
+    const r = await tg("sendMessage", params);
     if (r.ok) sent++; else { failed++; if (r.error_code === 403) delete subs[chatId]; }
     await new Promise(r2 => setTimeout(r2, 50)); // лимиты Telegram
   }
   writeJson(SUBS_FILE, subs);
   return { sent, failed, subscribers: Object.keys(subs).length };
 }
-
-// Произвольный текст: POST { text } с заголовком X-Token
+// Произвольный текст: POST { text, button? } с заголовком X-Token
+// button (необязательно): { text, url } — своя подпись и ссылка на кнопке.
+// Если не передан — используется кнопка по умолчанию на мини-апп (APP_LINK).
+// Если явно передать button: null, кнопка не добавляется вовсе.
 app.post("/api/broadcast", async (req, res) => {
   if (!ADMIN_TOKEN || req.get("X-Token") !== ADMIN_TOKEN) return res.status(403).json({ error: "forbidden" });
   const text = (req.body && req.body.text || "").trim();
   if (!text) return res.status(400).json({ error: "no text" });
-  res.json(Object.assign({ ok: true }, await sendToAll(text)));
+  const hasButtonField = req.body && Object.prototype.hasOwnProperty.call(req.body, "button");
+  const replyMarkup = (hasButtonField && req.body.button === null) ? undefined : buildReplyMarkup(req.body && req.body.button);
+  res.json(Object.assign({ ok: true }, await sendToAll(text, replyMarkup)));
 });
-
 // Утреннее сообщение: сервер сам собирает его из свежих новостей + панк-подъём в стиле Сильверхенда.
 // Запускается одной короткой ссылкой: GET /api/morning?token=...
 const JOKES = [
@@ -176,22 +175,18 @@ const JOKES = [
   "Город горит неоном, серверы горят инференсом, корпы горят от жадности. Ты — просыпайся.",
   "Проснись и пой, самурай. Революцию отложим, новости — нет 🛰️"
 ];
-
 app.get("/api/morning", async (req, res) => {
   if (!authQuery(req, res)) return;
   const news = currentNews();
   const joke = JOKES[Math.floor(Math.random() * JOKES.length)];
   let text = "🛰️ <b>AI-News — утренний дайджест</b>\n" + joke + "\n";
   (news.digest || []).slice(0, 4).forEach(l => { text += "\n⚡ " + l; });
-  text += "\n\nВся лента с карточками и лайками 👉 " + APP_LINK;
-  res.json(Object.assign({ ok: true }, await sendToAll(text)));
+  res.json(Object.assign({ ok: true }, await sendToAll(text, buildReplyMarkup())));
 });
-
 app.get("/api/subs", (req, res) => {
   if (!authQuery(req, res)) return;
   res.json({ subscribers: Object.keys(subs).length });
 });
-
 /* ---------- Приём свежих новостей ---------- */
 function saveNews(news, dayTag) {
   writeJson(NEWS_FILE, news);
@@ -202,7 +197,6 @@ function saveNews(news, dayTag) {
   hist.unshift({ day, updated: news.updated || day, digest: news.digest || [], ideas: news.ideas || [] });
   writeJson(DIG_FILE, hist.slice(0, 30));
 }
-
 // Основной путь: POST целиком, JSON в теле, токен в заголовке X-Token
 app.post("/api/ingest", (req, res) => {
   if (!ADMIN_TOKEN || req.get("X-Token") !== ADMIN_TOKEN) return res.status(403).json({ error: "forbidden" });
@@ -211,26 +205,21 @@ app.post("/api/ingest", (req, res) => {
   saveNews(news, req.query.tag);
   res.json({ ok: true, saved: true, items: news.items.length });
 });
-
 // Запасной путь: GET кусками (для очень коротких кусков)
 // GET /api/ingest?token=...&tag=2026-07-10&seq=1&total=12&data=<base64url>
 const chunks = {}; // tag -> { total, parts, ts }
-
 app.get("/api/ingest", (req, res) => {
   if (!authQuery(req, res)) return;
   const { tag, seq, total, data } = req.query;
   const s = parseInt(seq, 10), t = parseInt(total, 10);
   if (!tag || !data || !s || !t || s < 1 || s > t || t > 2000) return res.status(400).json({ error: "bad chunk" });
-
   const now = Date.now();
   for (const k of Object.keys(chunks)) if (now - chunks[k].ts > 36e5) delete chunks[k];
   if (!chunks[tag]) chunks[tag] = { total: t, parts: {}, ts: now };
   chunks[tag].parts[s] = data;
   chunks[tag].ts = now;
-
   const got = Object.keys(chunks[tag].parts).length;
   if (got < t) return res.json({ ok: true, received: got, total: t });
-
   try {
     let b64 = "";
     for (let i = 1; i <= t; i++) b64 += chunks[tag].parts[i];
@@ -244,7 +233,6 @@ app.get("/api/ingest", (req, res) => {
     return res.status(422).json({ error: "assemble failed: " + e.message });
   }
 });
-
 // Архив дайджестов
 app.get("/api/digests", (req, res) => {
   const hist = readJson(DIG_FILE, []);
@@ -254,15 +242,12 @@ app.get("/api/digests", (req, res) => {
   }
   res.json(hist);
 });
-
 app.get("/api/health", (req, res) => {
   const news = currentNews();
   res.json({ ok: true, items: (news.items || []).length, updated: news.updated || null, bot: !!BOT_TOKEN, subscribers: Object.keys(subs).length });
 });
-
 /* ---------- Статика ---------- */
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "index.html")));
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log("AI-News mini app on :" + PORT);
