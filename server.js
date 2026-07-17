@@ -247,7 +247,7 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true, items: (news.items || []).length, updated: news.updated || null, bot: !!BOT_TOKEN, subscribers: Object.keys(subs).length });
 });
 /* ---------- Статика ---------- */
-app.get("/", (req, res) => res.sendFile(path.join(__dirname, "index.html")));
+app.get("/", (req, res) => res.set("Cache-Control", "no-store").sendFile(path.join(__dirname, "index.html")));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log("AI-News mini app on :" + PORT);
