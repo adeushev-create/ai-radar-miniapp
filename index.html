@@ -62,6 +62,8 @@
     font-size: 14px; outline: none; background: #fff; margin-bottom: 12px;
   }
   .search:focus { border-color: #4f46e5; }
+  .datehint { font-size: 12.5px; color: #6b7080; margin: -2px 0 10px; }
+  .datehint a { color: #4f46e5; font-weight: 600; text-decoration: none; }
   .grid { display: flex; flex-direction: column; gap: 11px; }
   .card {
     background: #fff; border-radius: 15px; padding: 15px 16px; border: 1px solid #ebedf5;
@@ -155,6 +157,7 @@
     <span class="chip" data-cat="archive">🗄 Архив</span>
   </div>
   <input class="search" id="search" placeholder="Поиск по новостям…">
+  <div class="datehint" id="dateHint" style="display:none"></div>
 
   <div class="loading" id="loading"><div class="spinner"></div>Загружаю новости…</div>
   <div class="grid" id="grid"></div>
@@ -232,7 +235,7 @@ let UID = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsaf
 if (!UID) { UID = "an" + Math.random().toString(36).slice(2, 12); lsSet("ainews_uid", UID); }
 
 let ITEMS = [], AGG = {}, MY = lsGet("ainews_my_votes", {}), READ = lsGet("ainews_read", {});
-let FILTER = "all", QUERY = "";
+let FILTER = "all", QUERY = "", DATE_FILTER = null;
 
 function score(id) { const a = AGG[id] || { up: 0, down: 0 }; return a.up - a.down; }
 
@@ -246,7 +249,9 @@ function render() {
     list.sort((a, b) => score(b.id) - score(a.id) || b.d.localeCompare(a.d));
   }
   const visible = list.filter(i => {
-    if (FILTER === "archive") { if (isFresh(i)) return false; }
+    if (DATE_FILTER) {
+      if (i.d !== DATE_FILTER) return false;
+    } else if (FILTER === "archive") { if (isFresh(i)) return false; }
     else if (!isFresh(i)) return false;
     if (FILTER === "unread" && READ[i.id]) return false;
     if (!["all", "top", "unread", "archive"].includes(FILTER) && i.c !== FILTER) return false;
@@ -318,6 +323,13 @@ function openModal(id) {
 }
 
 document.addEventListener("click", e => {
+  const resetDate = e.target.closest("#resetDate");
+  if (resetDate) {
+    e.preventDefault();
+    $("digestDate").value = "0";
+    showDigest(0);
+    return;
+  }
   const voteBtn = e.target.closest(".vote");
   if (voteBtn) {
     e.stopPropagation();
@@ -346,6 +358,16 @@ function fmtDay(day) {
   const dt = new Date(day + "T12:00:00");
   return isNaN(dt) ? day : dt.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
 }
+function updateDateHint() {
+  const hint = $("dateHint");
+  if (DATE_FILTER) {
+    hint.style.display = "block";
+    hint.innerHTML = "Показаны новости за " + fmtDay(DATE_FILTER) + " · <a href=\"#\" id=\"resetDate\">показать все</a>";
+  } else {
+    hint.style.display = "none";
+    hint.innerHTML = "";
+  }
+}
 function showDigest(idx) {
   const d = DIGESTS[idx];
   if (!d) return;
@@ -357,6 +379,9 @@ function showDigest(idx) {
   } else {
     $("ideas").style.display = "none";
   }
+  DATE_FILTER = (idx > 0 && d.day && d.day !== "current") ? d.day : null;
+  updateDateHint();
+  render();
 }
 $("digestDate").addEventListener("change", e => showDigest(parseInt(e.target.value, 10)));
 
