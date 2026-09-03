@@ -4,6 +4,8 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
+const crypto = require("crypto");
 const app = express();
 app.use(express.json({ limit: "5mb" }));
 // Постоянное хранилище: Railway Volume (если подключён) или локальная папка
@@ -246,6 +248,60 @@ app.get("/api/health", (req, res) => {
   const news = currentNews();
   res.json({ ok: true, items: (news.items || []).length, updated: news.updated || null, bot: !!BOT_TOKEN, subscribers: Object.keys(subs).length });
 });
+/* ---------- Bootstrap из переменных окружения ----------
+ * Нужен, когда нет прямого сетевого доступа до сервера (например, из
+ * песочницы агента) — тогда новости и рассылка приходят через Railway
+ * MCP (set-variables), а не через POST-запрос. При каждом старте/рестарте
+ * сервер проверяет пару переменных окружения и применяет их один раз,
+ * запоминая, что уже применено, в файле на постоянном диске (DATA_DIR),
+ * чтобы повторный рестарт с теми же переменными не сработал дважды. */
+const BOOTSTRAP_MARK_FILE = path.join(DATA_DIR, "bootstrap.json");
+function readBootstrapMark() { return readJson(BOOTSTRAP_MARK_FILE, {}); }
+function writeBootstrapMark(mark) { writeJson(BOOTSTRAP_MARK_FILE, mark); }
+async function runBootstrap() {
+  const mark = readBootstrapMark();
+  // 1) Новости целиком: BOOTSTRAP_NEWS_GZ_B64 = base64(gzip(JSON.stringify(news)))
+  const newsB64 = process.env.BOOTSTRAP_NEWS_GZ_B64;
+  if (newsB64) {
+    try {
+      const hash = crypto.createHash("sha256").update(newsB64).digest("hex");
+      if (mark.newsHash !== hash) {
+        const buf = Buffer.from(newsB64, "base64");
+        const json = zlib.gunzipSync(buf).toString("utf8");
+        const news = JSON.parse(json);
+        if (Array.isArray(news.items) && news.items.length) {
+          saveNews(news);
+          mark.newsHash = hash;
+          writeBootstrapMark(mark);
+          console.log("BOOTSTRAP: новости из BOOTSTRAP_NEWS_GZ_B64 применены, items=" + news.items.length);
+        } else {
+          console.warn("BOOTSTRAP: BOOTSTRAP_NEWS_GZ_B64 без items, пропущено");
+        }
+      } else {
+        console.log("BOOTSTRAP: BOOTSTRAP_NEWS_GZ_B64 не изменился с прошлого раза, пропущено");
+      }
+    } catch (e) {
+      console.error("BOOTSTRAP: ошибка разбора BOOTSTRAP_NEWS_GZ_B64:", e.message);
+    }
+  }
+  // 2) Рассылка: BOOTSTRAP_BROADCAST_TEXT + уникальный BOOTSTRAP_BROADCAST_TAG (например, дата)
+  const bText = process.env.BOOTSTRAP_BROADCAST_TEXT;
+  const bTag = process.env.BOOTSTRAP_BROADCAST_TAG;
+  if (bText && bTag) {
+    if (mark.broadcastTag !== bTag) {
+      try {
+        const result = await sendToAll(bText, buildReplyMarkup());
+        mark.broadcastTag = bTag;
+        writeBootstrapMark(mark);
+        console.log("BOOTSTRAP: рассылка тега " + bTag + " отправлена:", JSON.stringify(result));
+      } catch (e) {
+        console.error("BOOTSTRAP: ошибка рассылки тега " + bTag + ":", e.message);
+      }
+    } else {
+      console.log("BOOTSTRAP: рассылка тега " + bTag + " уже была отправлена ранее, пропущено");
+    }
+  }
+}
 /* ---------- Статика ---------- */
 app.get("/", (req, res) => res.set("Cache-Control", "no-store").sendFile(path.join(__dirname, "index.html")));
 const PORT = process.env.PORT || 3000;
@@ -265,5 +321,10 @@ app.listen(PORT, async () => {
       menu_button: { type: "web_app", text: "📰 AI-News", web_app: { url: "https://" + domain + "/" } }
     });
     console.log("setChatMenuButton:", JSON.stringify(r2));
+  }
+  try {
+    await runBootstrap();
+  } catch (e) {
+    console.error("BOOTSTRAP: неожиданная ошибка:", e.message);
   }
 });
